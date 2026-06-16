@@ -1,0 +1,3 @@
+[submodule "stake-python"]
+	path = stake-python
+	url = https://github.com/stabacco/stake-python.git
