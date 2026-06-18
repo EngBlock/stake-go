@@ -11,6 +11,7 @@ import (
 	"net/url"
 	"os"
 	"strings"
+	"sync"
 )
 
 const defaultPlatformType = "WEB_f5K2x3"
@@ -32,11 +33,15 @@ type Option func(*Client) error
 type Client struct {
 	httpClient   *http.Client
 	baseURL      string
+	mu           sync.RWMutex // guards sessionToken and User
 	sessionToken string
 	credentials  *CredentialsLoginRequest
 	exchange     Exchange
 
-	// User is populated after Login succeeds.
+	// User is populated after Login succeeds. It is an exported field for
+	// convenience, but callers performing concurrent Login calls should prefer
+	// the value returned by Login; reading User directly while Login is in
+	// progress is not safe.
 	User *User
 
 	// NYSE exposes typed services for Stake's US market endpoints.
@@ -181,12 +186,19 @@ func (c *Client) SetExchange(exchange Exchange) error {
 
 // SessionToken returns the current Stake session token.
 func (c *Client) SessionToken() string {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
 	return c.sessionToken
 }
 
 // Login authenticates with Stake and retrieves the current user.
 func (c *Client) Login(ctx context.Context) (*User, error) {
-	if c.credentials != nil {
+	c.mu.RLock()
+	hasCreds := c.credentials != nil
+	tokenEmpty := c.sessionToken == ""
+	c.mu.RUnlock()
+
+	if hasCreds {
 		var response createSessionResponse
 		if err := c.do(ctx, http.MethodPost, NYSE.CreateSession, c.credentials, &response); err != nil {
 			return nil, fmt.Errorf("%w: %w", ErrInvalidLogin, err)
@@ -195,8 +207,10 @@ func (c *Client) Login(ctx context.Context) (*User, error) {
 			return nil, fmt.Errorf("%w: missing session key", ErrInvalidLogin)
 		}
 
+		c.mu.Lock()
 		c.sessionToken = response.SessionKey
-	} else if c.sessionToken == "" {
+		c.mu.Unlock()
+	} else if tokenEmpty {
 		return nil, ErrMissingSessionToken
 	}
 
@@ -210,7 +224,9 @@ func (c *Client) Login(ctx context.Context) (*User, error) {
 		return nil, fmt.Errorf("%w: %w", ErrInvalidLogin, err)
 	}
 
+	c.mu.Lock()
 	c.User = &user
+	c.mu.Unlock()
 	return &user, nil
 }
 
@@ -266,8 +282,12 @@ func (c *Client) do(ctx context.Context, method, endpoint string, in any, out an
 
 	request.Header.Set("Accept", "application/json")
 	request.Header.Set("Content-Type", "application/json")
-	if c.sessionToken != "" {
-		request.Header.Set("Stake-Session-Token", c.sessionToken)
+
+	c.mu.RLock()
+	token := c.sessionToken
+	c.mu.RUnlock()
+	if token != "" {
+		request.Header.Set("Stake-Session-Token", token)
 	}
 
 	response, err := c.httpClient.Do(request)

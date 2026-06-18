@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 )
 
@@ -504,4 +505,46 @@ func TestResolveEndpointPreservesQuery(t *testing.T) {
 	if brokerage.BrokerageFee == nil || *brokerage.BrokerageFee != 1 {
 		t.Fatalf("unexpected brokerage: %+v", brokerage)
 	}
+}
+
+// TestClientLoginIsRaceFreeUnderConcurrency fires concurrent Login and
+// SessionToken calls against a shared *Client. It is meaningful only under
+// the race detector (-race); a data race on the sessionToken/User fields
+// would be reported as a WARNING: DATA RACE.
+func TestClientLoginIsRaceFreeUnderConcurrency(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/sessions/v2/createSession":
+			writeJSON(t, w, map[string]string{"sessionKey": "tok"})
+		case "/api/user":
+			writeJSON(t, w, map[string]any{
+				"userId":           "u1",
+				"firstName":        "Ada",
+				"lastName":         "L",
+				"emailAddress":     "a@example.com",
+				"macStatus":        "OK",
+				"accountType":      "INDIVIDUAL",
+				"regionIdentifier": "AU",
+			})
+		default:
+			writeJSON(t, w, map[string]any{})
+		}
+	}))
+	defer server.Close()
+
+	client, err := NewClient(
+		WithBaseURL(server.URL),
+		WithCredentials("user@example.com", "secret"),
+	)
+	if err != nil {
+		t.Fatalf("NewClient: %v", err)
+	}
+
+	var wg sync.WaitGroup
+	for i := 0; i < 16; i++ {
+		wg.Add(2)
+		go func() { defer wg.Done(); _, _ = client.Login(context.Background()) }()
+		go func() { defer wg.Done(); _ = client.SessionToken() }()
+	}
+	wg.Wait()
 }
