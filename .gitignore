@@ -1,2 +1,20 @@
 trading.hellostake.com.har
 opencode.json
+
+# Go
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+*.prof
+coverage.*
+dist/
+
+# Editor / OS
+.DS_Store
+.idea/
+.vscode/
+*.swp
