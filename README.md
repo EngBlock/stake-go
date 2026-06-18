@@ -46,8 +46,12 @@ go test -race ./...
 
 ## Repository notes
 
-- The `stake-python/` directory is a git submodule pointing at a third-party Python Stake client ([stabacco/stake-python](https://github.com/stabacco/stake-python)) included as a reference. You do **not** need to clone it (or run `git submodule update --init`) to build or use the Go code.
+- The `stake-python/` directory is a git submodule pointing at a third-party Python Stake client ([stabacco/stake-python](https://github.com/stabacco/stake-python)). You do **not** need to clone it (or run `git submodule update --init`) to build or use the Go code.
 - Requires Go 1.26+.
+
+## Acknowledgements
+
+This project was inspired by and uses [stabacco/stake-python](https://github.com/stabacco/stake-python) as a reference for Stake's unofficial API endpoints and request shapes. The Python client was invaluable for reverse-engineering the API; `stake-go` is an independent Go reimplementation and is not affiliated with either Stake or the `stake-python` maintainers.
 
 ## Contributing
 
