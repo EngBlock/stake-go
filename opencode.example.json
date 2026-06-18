@@ -1,0 +1,14 @@
+{
+  "mcp": {
+    "stake": {
+      "type": "local",
+      "command": ["go", "run", "./cmd/mcp-server"],
+      "environment": {
+        "STAKE_TOKEN_FILE": "<path-to-session-token-file>",
+        "STAKE_USERNAME_COMMAND": "<absolute-path-to-secret-manager> get <username-item-id>",
+        "STAKE_PASSWORD_COMMAND": "<absolute-path-to-secret-manager> get <password-item-id>",
+        "STAKE_OTP_COMMAND": "<absolute-path-to-otp-provider> get <totp-item-id>"
+      }
+    }
+  }
+}
