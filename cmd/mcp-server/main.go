@@ -16,6 +16,8 @@ func main() {
 	disableTokenCache := flag.Bool("no-token-cache", false, "disable reading and writing the Stake session token cache")
 	enableWatchlistMutations := flag.Bool("enable-watchlist-mutations", false, "enable watchlist create/update/delete tools")
 	enableOrderCancel := flag.Bool("enable-order-cancel", false, "enable pending order cancellation tools")
+	enableTrading := flag.Bool("enable-trading", false, "enable buy/sell trading tools")
+	autoConfirmWrites := flag.Bool("auto", false, "skip MCP confirmation for buy/sell trading tools")
 	flag.Parse()
 
 	ctx := context.Background()
@@ -27,6 +29,8 @@ func main() {
 	server := newMCPServer(auth, serverConfig{
 		EnableWatchlistMutations: *enableWatchlistMutations,
 		EnableOrderCancel:        *enableOrderCancel,
+		EnableTrading:            *enableTrading,
+		AutoConfirmWrites:        *autoConfirmWrites,
 	})
 
 	if *httpAddr != "" {

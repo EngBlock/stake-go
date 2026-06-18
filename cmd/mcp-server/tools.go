@@ -11,6 +11,8 @@ import (
 type serverConfig struct {
 	EnableWatchlistMutations bool
 	EnableOrderCancel        bool
+	EnableTrading            bool
+	AutoConfirmWrites        bool
 }
 
 func newMCPServer(auth *stakeAuth, cfg serverConfig) *mcp.Server {
@@ -30,11 +32,22 @@ func newMCPServer(auth *stakeAuth, cfg serverConfig) *mcp.Server {
 	if cfg.EnableOrderCancel {
 		registerOrderCancelTools(server, auth)
 	}
+	if cfg.EnableTrading {
+		registerTradingTools(server, auth, cfg)
+	}
 	return server
 }
 
 func instructions(cfg serverConfig) string {
 	instructions := "Use this server to inspect the authenticated Stake account and market data. Trading tools are intentionally not available in this build."
+	if cfg.EnableTrading {
+		instructions = "Use this server to inspect the authenticated Stake account, market data, and place buy/sell trades. Trading tools submit real orders."
+		if cfg.AutoConfirmWrites {
+			instructions += " Buy/sell trading tools execute without MCP confirmation because --auto was set."
+		} else {
+			instructions += " Buy/sell trading tools require MCP confirmation before an order is submitted."
+		}
+	}
 	if cfg.EnableWatchlistMutations {
 		instructions += " Watchlist mutation tools are enabled and change Stake watchlists."
 	}
@@ -52,6 +65,74 @@ func addStakeTool[In any](server *mcp.Server, auth *stakeAuth, name, description
 		result, err := handler(ctx, client, args)
 		return nil, result, err
 	}))
+}
+
+func addTradingTool[In any](server *mcp.Server, auth *stakeAuth, cfg serverConfig, name, description string, handler func(In) (string, func(context.Context, *stake.Client) (any, error), error)) {
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        name,
+		Description: description,
+		Annotations: tradingToolAnnotations(),
+	}, func(ctx context.Context, req *mcp.CallToolRequest, args In) (*mcp.CallToolResult, any, error) {
+		confirmation, execute, err := handler(args)
+		if err != nil {
+			return nil, nil, err
+		}
+
+		client, err := authenticatedTradingClient(ctx, auth)
+		if err != nil {
+			return nil, nil, err
+		}
+		if err := confirmTradingTool(ctx, req, cfg, confirmation); err != nil {
+			return nil, nil, err
+		}
+
+		result, err := execute(ctx, client)
+		return nil, result, err
+	})
+}
+
+func tradingToolAnnotations() *mcp.ToolAnnotations {
+	return &mcp.ToolAnnotations{
+		DestructiveHint: boolPtr(true),
+		IdempotentHint:  false,
+		OpenWorldHint:   boolPtr(true),
+		ReadOnlyHint:    false,
+	}
+}
+
+func boolPtr(value bool) *bool {
+	return &value
+}
+
+func authenticatedTradingClient(ctx context.Context, auth *stakeAuth) (*stake.Client, error) {
+	if _, err := auth.Login(ctx); err != nil {
+		return nil, err
+	}
+	return auth.CurrentClient(ctx)
+}
+
+func confirmTradingTool(ctx context.Context, req *mcp.CallToolRequest, cfg serverConfig, confirmation string) error {
+	if cfg.AutoConfirmWrites {
+		return nil
+	}
+	if req == nil || req.Session == nil {
+		return fmt.Errorf("trade confirmation is required but no MCP session is available")
+	}
+
+	result, err := req.Session.Elicit(ctx, &mcp.ElicitParams{
+		Message: "Confirm this real-money Stake order before submission: " + confirmation,
+	})
+	if err != nil {
+		return fmt.Errorf("trade confirmation is required before order submission: %w", err)
+	}
+	if result == nil || result.Action != "accept" {
+		action := "cancel"
+		if result != nil && result.Action != "" {
+			action = result.Action
+		}
+		return fmt.Errorf("trade confirmation %s; order was not submitted", action)
+	}
+	return nil
 }
 
 func registerReadOnlyTools(server *mcp.Server, auth *stakeAuth) {
@@ -380,4 +461,144 @@ func registerOrderCancelTools(server *mcp.Server, auth *stakeAuth) {
 		}
 		return output("cancelled", true), nil
 	})
+}
+
+func registerTradingTools(server *mcp.Server, auth *stakeAuth, cfg serverConfig) {
+	addTradingTool(server, auth, cfg, "nyse.trades.market_buy", "Place a US-market market buy order. Requires MCP confirmation unless --auto is set.", func(args nyseMarketBuyInput) (string, func(context.Context, *stake.Client) (any, error), error) {
+		request, err := args.toStake()
+		if err != nil {
+			return "", nil, err
+		}
+		confirmation := fmt.Sprintf("NYSE market buy %s with %g USD cash.", request.Symbol, request.AmountCash)
+		return confirmation, func(ctx context.Context, client *stake.Client) (any, error) {
+			trade, err := client.NYSE.Trades.Buy(ctx, request)
+			return output("trade", trade), err
+		}, nil
+	})
+
+	addTradingTool(server, auth, cfg, "nyse.trades.limit_buy", "Place a US-market limit buy order. Requires MCP confirmation unless --auto is set.", func(args nyseLimitBuyInput) (string, func(context.Context, *stake.Client) (any, error), error) {
+		request, err := args.toStake()
+		if err != nil {
+			return "", nil, err
+		}
+		confirmation := fmt.Sprintf("NYSE limit buy %d shares of %s at up to %g USD per share.", request.Quantity, request.Symbol, request.LimitPrice)
+		return confirmation, func(ctx context.Context, client *stake.Client) (any, error) {
+			trade, err := client.NYSE.Trades.Buy(ctx, request)
+			return output("trade", trade), err
+		}, nil
+	})
+
+	addTradingTool(server, auth, cfg, "nyse.trades.stop_buy", "Place a US-market stop buy order. Requires MCP confirmation unless --auto is set.", func(args nyseStopBuyInput) (string, func(context.Context, *stake.Client) (any, error), error) {
+		request, err := args.toStake()
+		if err != nil {
+			return "", nil, err
+		}
+		confirmation := fmt.Sprintf("NYSE stop buy %s with %g USD cash when price reaches %g USD.", request.Symbol, request.AmountCash, request.Price)
+		return confirmation, func(ctx context.Context, client *stake.Client) (any, error) {
+			trade, err := client.NYSE.Trades.Buy(ctx, request)
+			return output("trade", trade), err
+		}, nil
+	})
+
+	addTradingTool(server, auth, cfg, "nyse.trades.market_sell", "Place a US-market market sell order. Requires MCP confirmation unless --auto is set.", func(args nyseMarketSellInput) (string, func(context.Context, *stake.Client) (any, error), error) {
+		request, err := args.toStake()
+		if err != nil {
+			return "", nil, err
+		}
+		confirmation := fmt.Sprintf("NYSE market sell %g shares of %s.", request.Quantity, request.Symbol)
+		return confirmation, func(ctx context.Context, client *stake.Client) (any, error) {
+			trade, err := client.NYSE.Trades.Sell(ctx, request)
+			return output("trade", trade), err
+		}, nil
+	})
+
+	addTradingTool(server, auth, cfg, "nyse.trades.limit_sell", "Place a US-market limit sell order. Requires MCP confirmation unless --auto is set.", func(args nyseLimitSellInput) (string, func(context.Context, *stake.Client) (any, error), error) {
+		request, err := args.toStake()
+		if err != nil {
+			return "", nil, err
+		}
+		confirmation := fmt.Sprintf("NYSE limit sell %d shares of %s at no less than %g USD per share.", request.Quantity, request.Symbol, request.LimitPrice)
+		return confirmation, func(ctx context.Context, client *stake.Client) (any, error) {
+			trade, err := client.NYSE.Trades.Sell(ctx, request)
+			return output("trade", trade), err
+		}, nil
+	})
+
+	addTradingTool(server, auth, cfg, "nyse.trades.stop_sell", "Place a US-market stop sell order. Requires MCP confirmation unless --auto is set.", func(args nyseStopSellInput) (string, func(context.Context, *stake.Client) (any, error), error) {
+		request, err := args.toStake()
+		if err != nil {
+			return "", nil, err
+		}
+		confirmation := fmt.Sprintf("NYSE stop sell %g shares of %s when price reaches %g USD.", request.Quantity, request.Symbol, request.StopPrice)
+		return confirmation, func(ctx context.Context, client *stake.Client) (any, error) {
+			trade, err := client.NYSE.Trades.Sell(ctx, request)
+			return output("trade", trade), err
+		}, nil
+	})
+
+	addTradingTool(server, auth, cfg, "asx.trades.market_buy", "Place an ASX market-to-limit buy order. Requires MCP confirmation unless --auto is set.", func(args asxMarketTradeInput) (string, func(context.Context, *stake.Client) (any, error), error) {
+		request, err := args.toMarketBuy()
+		if err != nil {
+			return "", nil, err
+		}
+		confirmation := fmt.Sprintf("ASX market-to-limit buy %d units of %s using %s.", request.Units, asxInstrumentDescription(request.Symbol, request.InstrumentCode), asxMarketPriceDescription(request.Price, "current ask"))
+		return confirmation, func(ctx context.Context, client *stake.Client) (any, error) {
+			order, err := client.ASX.Trades.Buy(ctx, request)
+			return output("order", order), err
+		}, nil
+	})
+
+	addTradingTool(server, auth, cfg, "asx.trades.limit_buy", "Place an ASX limit buy order. Requires MCP confirmation unless --auto is set.", func(args asxLimitTradeInput) (string, func(context.Context, *stake.Client) (any, error), error) {
+		request, err := args.toLimitBuy()
+		if err != nil {
+			return "", nil, err
+		}
+		confirmation := fmt.Sprintf("ASX limit buy %d units of %s at up to %g AUD per unit.", request.Units, asxInstrumentDescription(request.Symbol, request.InstrumentCode), request.Price)
+		return confirmation, func(ctx context.Context, client *stake.Client) (any, error) {
+			order, err := client.ASX.Trades.Buy(ctx, request)
+			return output("order", order), err
+		}, nil
+	})
+
+	addTradingTool(server, auth, cfg, "asx.trades.market_sell", "Place an ASX market-to-limit sell order. Requires MCP confirmation unless --auto is set.", func(args asxMarketTradeInput) (string, func(context.Context, *stake.Client) (any, error), error) {
+		request, err := args.toMarketSell()
+		if err != nil {
+			return "", nil, err
+		}
+		confirmation := fmt.Sprintf("ASX market-to-limit sell %d units of %s using %s.", request.Units, asxInstrumentDescription(request.Symbol, request.InstrumentCode), asxMarketPriceDescription(request.Price, "current bid"))
+		return confirmation, func(ctx context.Context, client *stake.Client) (any, error) {
+			order, err := client.ASX.Trades.Sell(ctx, request)
+			return output("order", order), err
+		}, nil
+	})
+
+	addTradingTool(server, auth, cfg, "asx.trades.limit_sell", "Place an ASX limit sell order. Requires MCP confirmation unless --auto is set.", func(args asxLimitTradeInput) (string, func(context.Context, *stake.Client) (any, error), error) {
+		request, err := args.toLimitSell()
+		if err != nil {
+			return "", nil, err
+		}
+		confirmation := fmt.Sprintf("ASX limit sell %d units of %s at no less than %g AUD per unit.", request.Units, asxInstrumentDescription(request.Symbol, request.InstrumentCode), request.Price)
+		return confirmation, func(ctx context.Context, client *stake.Client) (any, error) {
+			order, err := client.ASX.Trades.Sell(ctx, request)
+			return output("order", order), err
+		}, nil
+	})
+}
+
+func asxInstrumentDescription(symbol, instrumentCode string) string {
+	switch {
+	case symbol != "" && instrumentCode != "":
+		return fmt.Sprintf("%s (%s)", symbol, instrumentCode)
+	case symbol != "":
+		return symbol
+	default:
+		return instrumentCode
+	}
+}
+
+func asxMarketPriceDescription(price *float64, fallback string) string {
+	if price == nil {
+		return fallback
+	}
+	return fmt.Sprintf("%g AUD", *price)
 }

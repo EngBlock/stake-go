@@ -189,7 +189,7 @@ func (c *Client) Login(ctx context.Context) (*User, error) {
 	if c.credentials != nil {
 		var response createSessionResponse
 		if err := c.do(ctx, http.MethodPost, NYSE.CreateSession, c.credentials, &response); err != nil {
-			return nil, fmt.Errorf("%w: %v", ErrInvalidLogin, err)
+			return nil, fmt.Errorf("%w: %w", ErrInvalidLogin, err)
 		}
 		if response.SessionKey == "" {
 			return nil, fmt.Errorf("%w: missing session key", ErrInvalidLogin)
@@ -207,7 +207,7 @@ func (c *Client) Login(ctx context.Context) (*User, error) {
 
 	var user User
 	if err := c.do(ctx, http.MethodGet, endpoint, nil, &user); err != nil {
-		return nil, fmt.Errorf("%w: %v", ErrInvalidLogin, err)
+		return nil, fmt.Errorf("%w: %w", ErrInvalidLogin, err)
 	}
 
 	c.User = &user
