@@ -4,13 +4,11 @@ import (
 	"context"
 	"flag"
 	"log"
-	"net/http"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
 func main() {
-	httpAddr := flag.String("http", "", "serve MCP over streamable HTTP at this address instead of stdio")
 	baseURL := flag.String("base-url", "", "override Stake API base URL, primarily for tests")
 	tokenFile := flag.String("token-file", "", "path to a cached Stake session token file")
 	disableTokenCache := flag.Bool("no-token-cache", false, "disable reading and writing the Stake session token cache")
@@ -32,14 +30,6 @@ func main() {
 		EnableTrading:            *enableTrading,
 		AutoConfirmWrites:        *autoConfirmWrites,
 	})
-
-	if *httpAddr != "" {
-		handler := mcp.NewStreamableHTTPHandler(func(*http.Request) *mcp.Server {
-			return server
-		}, nil)
-		log.Printf("MCP streamable HTTP listening at %s", *httpAddr)
-		log.Fatal(http.ListenAndServe(*httpAddr, handler))
-	}
 
 	if err := server.Run(ctx, &mcp.StdioTransport{}); err != nil {
 		log.Printf("MCP server failed: %v", err)
