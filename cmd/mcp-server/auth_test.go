@@ -11,7 +11,7 @@ import (
 	"testing"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
-	"github.com/nathanbeddoewebdev/stake-go/pkg/secretsauce"
+	"github.com/EngBlock/stake-go/pkg/secretsauce"
 )
 
 func TestStakeAuthLogsInWithCredentialsAndCachesToken(t *testing.T) {

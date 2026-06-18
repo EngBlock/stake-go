@@ -12,8 +12,8 @@ import (
 	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
-	"github.com/nathanbeddoewebdev/stake-go/pkg/secretsauce"
-	"github.com/nathanbeddoewebdev/stake-go/pkg/stake"
+	"github.com/EngBlock/stake-go/pkg/secretsauce"
+	"github.com/EngBlock/stake-go/pkg/stake"
 )
 
 func TestDefaultServerOmitsMutationTools(t *testing.T) {

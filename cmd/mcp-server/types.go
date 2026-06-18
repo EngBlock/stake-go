@@ -5,7 +5,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/nathanbeddoewebdev/stake-go/pkg/stake"
+	"github.com/EngBlock/stake-go/pkg/stake"
 )
 
 type noInput struct{}
